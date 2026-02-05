@@ -55,61 +55,61 @@ class OciApi
 
     $displayName = 'instance-' . date('Ymd-Hi');
 
-    // Construire le corps comme un tableau PHP
-    $bodyArray = [
-        'metadata' => [
-            'ssh_authorized_keys' => $sshKey,
-        ],
-        'shape' => $shape,
-        'compartmentId' => $config->tenancyId,
-        'displayName' => $displayName,
-        'availabilityDomain' => $availabilityDomain,
-        'sourceDetails' => json_decode($config->getSourceDetails(), true),
-        'createVnicDetails' => [
-            'assignPublicIp' => false,
-            'subnetId' => $config->subnetId,
-            'assignPrivateDnsRecord' => true,
-        ],
-        'agentConfig' => [
-            'pluginsConfig' => [
-                [
-                    'name' => 'Compute Instance Monitoring',
-                    'desiredState' => 'ENABLED',
-                ],
-            ],
-            'isMonitoringDisabled' => false,
-            'isManagementDisabled' => false,
-        ],
-        'definedTags' => new \stdClass(),
-        'freeformTags' => new \stdClass(),
-        'instanceOptions' => [
-            'areLegacyImdsEndpointsDisabled' => false,
-        ],
-        'availabilityConfig' => [
-            'recoveryAction' => 'RESTORE_INSTANCE',
-        ],
-        'shapeConfig' => [
-            'ocpus' => (float) $config->ocpus,
-            'memoryInGBs' => (float) $config->memoryInGBs,
-        ],
-    ];
-
-    // Convertir en JSON
-    $body = json_encode($bodyArray, JSON_UNESCAPED_SLASHES);
-
-    // === DEBUG ===
-    echo "\n=== Request Body (Pretty Print) ===\n";
-    echo json_encode($bodyArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
-    echo "====================================\n\n";
+    // Échapper la clé SSH pour JSON (enlever les guillemets ajoutés par json_encode)
+    $sshKeyJson = json_encode($sshKey, JSON_UNESCAPED_SLASHES);
     
-    echo "=== Request Body (Raw JSON) ===\n";
-    echo $body . "\n";
-    echo "================================\n\n";
+    echo "\n=== SSH Key JSON Debug ===\n";
+    echo "Original: $sshKey\n";
+    echo "JSON encoded: $sshKeyJson\n";
+    echo "==========================\n\n";
 
-    // Vérifier que le JSON est valide
+    $body = <<<EOD
+{
+    "metadata": {
+        "ssh_authorized_keys": $sshKeyJson
+    },
+    "shape": "$shape",
+    "compartmentId": "{$config->tenancyId}",
+    "displayName": "$displayName",
+    "availabilityDomain": "$availabilityDomain",
+    "sourceDetails": {$config->getSourceDetails()},
+    "createVnicDetails": {
+        "assignPublicIp": false,
+        "subnetId": "{$config->subnetId}",
+        "assignPrivateDnsRecord": true
+    },
+    "agentConfig": {
+        "pluginsConfig": [
+            {
+                "name": "Compute Instance Monitoring",
+                "desiredState": "ENABLED"
+            }
+        ],
+        "isMonitoringDisabled": false,
+        "isManagementDisabled": false
+    },
+    "instanceOptions": {
+        "areLegacyImdsEndpointsDisabled": false
+    },
+    "availabilityConfig": {
+        "recoveryAction": "RESTORE_INSTANCE"
+    },
+    "shapeConfig": {
+        "ocpus": {$config->ocpus},
+        "memoryInGBs": {$config->memoryInGBs}
+    }
+}
+EOD;
+
+    echo "\n=== Request Body ===\n";
+    echo $body . "\n";
+    echo "====================\n\n";
+
+    // Valider le JSON
+    $decoded = json_decode($body, true);
     if (json_last_error() !== JSON_ERROR_NONE) {
-        echo "❌ JSON Encoding Error: " . json_last_error_msg() . "\n";
-        throw new \Exception("Failed to encode JSON: " . json_last_error_msg());
+        echo "❌ INVALID JSON: " . json_last_error_msg() . "\n";
+        throw new \Exception("Invalid JSON body: " . json_last_error_msg());
     }
     echo "✅ JSON is valid\n\n";
 
