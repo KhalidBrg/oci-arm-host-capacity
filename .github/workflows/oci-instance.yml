@@ -2,9 +2,8 @@ name: OCI ARM Instance Creation
 
 on:
   schedule:
-    # Runs every 5 minutes
     - cron: '*/5 * * * *'
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   create-instance:
@@ -12,19 +11,18 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: '8.1'
         extensions: mbstring, curl, openssl
-        coverage: none
 
-    - name: Install Composer dependencies
-      run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+    - name: Install dependencies
+      run: composer install --no-dev --no-interaction --prefer-dist
 
-    - name: Create .env file from secrets
+    - name: Create .env file
       run: |
         cat > .env << EOF
         OCI_REGION=${{ secrets.OCI_REGION }}
@@ -42,13 +40,5 @@ jobs:
         OCI_MAX_INSTANCES=${{ secrets.OCI_MAX_INSTANCES }}
         EOF
 
-    - name: Run OCI instance creation script
+    - name: Run script
       run: php index.php
-
-    - name: Upload logs (on failure)
-      if: failure()
-      uses: actions/upload-artifact@v3
-      with:
-        name: oci-logs
-        path: oci.log
-        retention-days: 7
