@@ -37,4 +37,11 @@ jobs:
         OCI_MEMORY_IN_GBS: ${{ secrets.OCI_MEMORY_IN_GBS }}
         OCI_AVAILABILITY_DOMAIN: ${{ secrets.OCI_AVAILABILITY_DOMAIN }}
         OCI_MAX_INSTANCES: ${{ secrets.OCI_MAX_INSTANCES }}
-      run: php index.php
+            - name: Run debug wrapper
+        run: |
+          cat > debug_wrapper.php << 'EOFPHP'
+          [... colle tout le contenu du script debug_wrapper.php ici ...]
+          EOFPHP
+          php debug_wrapper.php
+        env:
+          [... garde tous les env existants ...]
