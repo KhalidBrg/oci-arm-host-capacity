@@ -15,16 +15,82 @@ function env(string $key, $default = false) {
 }
 
 echo "=== OCI Instance Creation Script ===\n";
+
+// Validation des variables obligatoires
+$requiredVars = [
+    'OCI_REGION',
+    'OCI_USER_ID',
+    'OCI_TENANCY_ID',
+    'OCI_KEY_FINGERPRINT',
+    'OCI_PRIVATE_KEY_FILENAME',
+    'OCI_SUBNET_ID',
+    'OCI_IMAGE_ID',
+    'OCI_SHAPE',
+    'OCI_OCPUS',
+    'OCI_MEMORY_IN_GBS',
+    'OCI_SSH_PUBLIC_KEY'
+];
+
+$missingVars = [];
+foreach ($requiredVars as $var) {
+    $value = env($var);
+    if (empty($value)) {
+        $missingVars[] = $var;
+    }
+}
+
+if (!empty($missingVars)) {
+    echo "❌ ERROR: Missing required environment variables:\n";
+    foreach ($missingVars as $var) {
+        echo "  - $var\n";
+    }
+    exit(1);
+}
+
 echo "Region: " . env('OCI_REGION') . "\n";
 echo "Shape: " . env('OCI_SHAPE') . "\n";
+echo "OCPUs: " . env('OCI_OCPUS') . "\n";
+echo "Memory: " . env('OCI_MEMORY_IN_GBS') . " GB\n";
 echo "Max Instances: " . env('OCI_MAX_INSTANCES', 1) . "\n\n";
 
+// === GESTION DE LA CLÉ PRIVÉE ===
+$privateKeyInput = env('OCI_PRIVATE_KEY_FILENAME');
+$tempKeyFile = null;
+
+// Vérifier si c'est un chemin de fichier existant ou le contenu de la clé
+if (file_exists($privateKeyInput)) {
+    echo "Using existing private key file: $privateKeyInput\n";
+    $privateKeyPath = $privateKeyInput;
+} elseif (strpos($privateKeyInput, '-----BEGIN') !== false) {
+    // C'est le contenu de la clé, créer un fichier temporaire
+    echo "Creating temporary private key file...\n";
+    $tempKeyFile = sys_get_temp_dir() . '/oci_private_key_' . uniqid() . '.pem';
+    
+    // Écrire la clé dans le fichier
+    if (file_put_contents($tempKeyFile, $privateKeyInput) === false) {
+        echo "❌ ERROR: Failed to create temporary key file\n";
+        exit(1);
+    }
+    
+    // Définir les permissions appropriées
+    chmod($tempKeyFile, 0600);
+    
+    $privateKeyPath = $tempKeyFile;
+    echo "Temporary key file created: $privateKeyPath\n";
+} else {
+    echo "❌ ERROR: OCI_PRIVATE_KEY_FILENAME is neither a valid file path nor a PEM key\n";
+    exit(1);
+}
+
+echo "\n";
+
+// === CONFIGURATION OCI ===
 $config = new OciConfig(
     env('OCI_REGION'),
     env('OCI_USER_ID'),
     env('OCI_TENANCY_ID'),
     env('OCI_KEY_FINGERPRINT'),
-    env('OCI_PRIVATE_KEY_FILENAME'),
+    $privateKeyPath,  // Utiliser le chemin du fichier (existant ou temporaire)
     env('OCI_AVAILABILITY_DOMAIN') ?: null,
     env('OCI_SUBNET_ID'),
     env('OCI_IMAGE_ID'),
@@ -70,6 +136,12 @@ echo "Instances with shape '$shape' (not terminated): $filteredCount\n\n";
 $existingInstances = $api->checkExistingInstances($config, $instances, $shape, $maxRunningInstancesOfThatShape);
 if ($existingInstances) {
     echo "Result: $existingInstances\n";
+    
+    // Nettoyer le fichier temporaire
+    if ($tempKeyFile && file_exists($tempKeyFile)) {
+        unlink($tempKeyFile);
+    }
+    
     return;
 }
 
@@ -106,6 +178,12 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
         }
 
         echo "Fatal error, stopping.\n";
+        
+        // Nettoyer le fichier temporaire
+        if ($tempKeyFile && file_exists($tempKeyFile)) {
+            unlink($tempKeyFile);
+        }
+        
         return;
     }
 
@@ -117,7 +195,17 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
         $notifier->notify($message);
     }
 
+    // Nettoyer le fichier temporaire
+    if ($tempKeyFile && file_exists($tempKeyFile)) {
+        unlink($tempKeyFile);
+    }
+
     return;
 }
 
 echo "❌ Failed to create instance in all availability domains.\n";
+
+// Nettoyer le fichier temporaire
+if ($tempKeyFile && file_exists($tempKeyFile)) {
+    unlink($tempKeyFile);
+}
