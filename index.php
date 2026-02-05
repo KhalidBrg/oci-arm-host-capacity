@@ -1,44 +1,39 @@
 <?php
 declare(strict_types=1);
 
+require __DIR__ . '/vendor/autoload.php';
 
-// useful when script is being executed by cron user
-$pathPrefix = ''; // e.g. /usr/share/nginx/oci-arm-host-capacity/
-
-require "{$pathPrefix}vendor/autoload.php";
-
-use Dotenv\Dotenv;
 use Hitrov\Exception\ApiCallException;
 use Hitrov\FileCache;
 use Hitrov\OciApi;
 use Hitrov\OciConfig;
 use Hitrov\TooManyRequestsWaiter;
 
-$envFilename = empty($argv[1]) ? '.env' : $argv[1];
-$dotenv = Dotenv::createUnsafeImmutable(__DIR__, $envFilename);
-$dotenv->safeLoad();
+// Fonction pour récupérer les variables d'environnement
+function env(string $key, $default = false) {
+    return $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key) ?: $default;
+}
 
-/*
- * No need to modify any value in this file anymore!
- * Copy .env.example to .env and adjust there instead.
- *
- * README.md now has all the information.
- */
+echo "=== OCI Instance Creation Script ===\n";
+echo "Region: " . env('OCI_REGION') . "\n";
+echo "Shape: " . env('OCI_SHAPE') . "\n";
+echo "Max Instances: " . env('OCI_MAX_INSTANCES', 1) . "\n\n";
+
 $config = new OciConfig(
-    getenv('OCI_REGION'),
-    getenv('OCI_USER_ID'),
-    getenv('OCI_TENANCY_ID'),
-    getenv('OCI_KEY_FINGERPRINT'),
-    getenv('OCI_PRIVATE_KEY_FILENAME'),
-    getenv('OCI_AVAILABILITY_DOMAIN') ?: null, // null or '' or 'jYtI:PHX-AD-1' or ['jYtI:PHX-AD-1','jYtI:PHX-AD-2']
-    getenv('OCI_SUBNET_ID'),
-    getenv('OCI_IMAGE_ID'),
-    (int) getenv('OCI_OCPUS'),
-    (int) getenv('OCI_MEMORY_IN_GBS')
+    env('OCI_REGION'),
+    env('OCI_USER_ID'),
+    env('OCI_TENANCY_ID'),
+    env('OCI_KEY_FINGERPRINT'),
+    env('OCI_PRIVATE_KEY_FILENAME'),
+    env('OCI_AVAILABILITY_DOMAIN') ?: null,
+    env('OCI_SUBNET_ID'),
+    env('OCI_IMAGE_ID'),
+    (int) env('OCI_OCPUS'),
+    (int) env('OCI_MEMORY_IN_GBS')
 );
 
-$bootVolumeSizeInGBs = (string) getenv('OCI_BOOT_VOLUME_SIZE_IN_GBS');
-$bootVolumeId = (string) getenv('OCI_BOOT_VOLUME_ID');
+$bootVolumeSizeInGBs = (string) env('OCI_BOOT_VOLUME_SIZE_IN_GBS');
+$bootVolumeId = (string) env('OCI_BOOT_VOLUME_ID');
 if ($bootVolumeSizeInGBs) {
     $config->setBootVolumeSizeInGBs($bootVolumeSizeInGBs);
 } elseif ($bootVolumeId) {
@@ -46,38 +41,39 @@ if ($bootVolumeSizeInGBs) {
 }
 
 $api = new OciApi();
-if (getenv('CACHE_AVAILABILITY_DOMAINS')) {
+if (env('CACHE_AVAILABILITY_DOMAINS')) {
     $api->setCache(new FileCache($config));
 }
-if (getenv('TOO_MANY_REQUESTS_TIME_WAIT')) {
-    $api->setWaiter(new TooManyRequestsWaiter((int) getenv('TOO_MANY_REQUESTS_TIME_WAIT')));
-}
-$notifier = (function (): \Hitrov\Interfaces\NotifierInterface {
-    /*
-     * if you have own https://core.telegram.org/bots
-     * and set TELEGRAM_BOT_API_KEY and your TELEGRAM_USER_ID in .env
-     *
-     * then you can get notified when script will succeed.
-     * otherwise - don't mind OR develop you own NotifierInterface
-     * to e.g. send SMS or email.
-     */
-    return new \Hitrov\Notification\Telegram();
-})();
-
-$shape = getenv('OCI_SHAPE');
-
-$maxRunningInstancesOfThatShape = 1;
-if (getenv('OCI_MAX_INSTANCES') !== false) {
-    $maxRunningInstancesOfThatShape = (int) getenv('OCI_MAX_INSTANCES');
+if (env('TOO_MANY_REQUESTS_TIME_WAIT')) {
+    $api->setWaiter(new TooManyRequestsWaiter((int) env('TOO_MANY_REQUESTS_TIME_WAIT')));
 }
 
+$notifier = new \Hitrov\Notification\Telegram();
+
+$shape = env('OCI_SHAPE');
+$maxRunningInstancesOfThatShape = (int) env('OCI_MAX_INSTANCES', 1);
+
+echo "Fetching existing instances...\n";
 $instances = $api->getInstances($config);
+echo "Total instances found: " . count($instances) . "\n";
+
+// Filtrer et afficher les instances
+$filteredCount = 0;
+foreach ($instances as $instance) {
+    if ($instance['shape'] === $shape && $instance['lifecycleState'] !== 'TERMINATED') {
+        $filteredCount++;
+        echo "  - Instance: {$instance['displayName']} | State: {$instance['lifecycleState']}\n";
+    }
+}
+echo "Instances with shape '$shape' (not terminated): $filteredCount\n\n";
 
 $existingInstances = $api->checkExistingInstances($config, $instances, $shape, $maxRunningInstancesOfThatShape);
 if ($existingInstances) {
-    echo "$existingInstances\n";
+    echo "Result: $existingInstances\n";
     return;
 }
+
+echo "No existing instances found. Attempting to create new instance...\n\n";
 
 if (!empty($config->availabilityDomains)) {
     if (is_array($config->availabilityDomains)) {
@@ -91,35 +87,37 @@ if (!empty($config->availabilityDomains)) {
 
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
+    echo "Trying availability domain: $availabilityDomain\n";
+    
     try {
-        $instanceDetails = $api->createInstance($config, $shape, getenv('OCI_SSH_PUBLIC_KEY'), $availabilityDomain);
+        $instanceDetails = $api->createInstance($config, $shape, env('OCI_SSH_PUBLIC_KEY'), $availabilityDomain);
     } catch(ApiCallException $e) {
         $message = $e->getMessage();
-        echo "$message\n";
-//            if ($notifier->isSupported()) {
-//                $notifier->notify($message);
-//            }
+        echo "Error: $message\n";
 
         if (
             $e->getCode() === 500 &&
             strpos($message, 'InternalError') !== false &&
             strpos($message, 'Out of host capacity') !== false
         ) {
-            // trying next availability domain
+            echo "Out of capacity, trying next domain...\n";
             sleep(16);
             continue;
         }
 
-        // current config is broken
+        echo "Fatal error, stopping.\n";
         return;
     }
 
-    // success
-    $message = json_encode($instanceDetails, JSON_PRETTY_PRINT);
+    // Success
+    $message = "✅ Instance created successfully!\n" . json_encode($instanceDetails, JSON_PRETTY_PRINT);
     echo "$message\n";
+    
     if ($notifier->isSupported()) {
         $notifier->notify($message);
     }
 
     return;
 }
+
+echo "❌ Failed to create instance in all availability domains.\n";
