@@ -9,6 +9,21 @@ jobs:
   create-instance:
     runs-on: ubuntu-latest
     
+    env:
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_USER_ID: ${{ secrets.OCI_USER_ID }}
+      OCI_TENANCY_ID: ${{ secrets.OCI_TENANCY_ID }}
+      OCI_KEY_FINGERPRINT: ${{ secrets.OCI_KEY_FINGERPRINT }}
+      OCI_PRIVATE_KEY_FILENAME: ${{ secrets.OCI_PRIVATE_KEY_FILENAME }}
+      OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+      OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
+      OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+      OCI_SHAPE: ${{ secrets.OCI_SHAPE }}
+      OCI_OCPUS: ${{ secrets.OCI_OCPUS }}
+      OCI_MEMORY_IN_GBS: ${{ secrets.OCI_MEMORY_IN_GBS }}
+      OCI_AVAILABILITY_DOMAIN: ${{ secrets.OCI_AVAILABILITY_DOMAIN }}
+      OCI_MAX_INSTANCES: ${{ secrets.OCI_MAX_INSTANCES }}
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -21,24 +36,6 @@ jobs:
 
     - name: Install dependencies
       run: composer install --no-dev --no-interaction --prefer-dist
-
-    - name: Create .env file
-      run: |
-        cat > .env << EOF
-        OCI_REGION=${{ secrets.OCI_REGION }}
-        OCI_USER_ID=${{ secrets.OCI_USER_ID }}
-        OCI_TENANCY_ID=${{ secrets.OCI_TENANCY_ID }}
-        OCI_KEY_FINGERPRINT=${{ secrets.OCI_KEY_FINGERPRINT }}
-        OCI_PRIVATE_KEY_FILENAME=${{ secrets.OCI_PRIVATE_KEY_FILENAME }}
-        OCI_SUBNET_ID=${{ secrets.OCI_SUBNET_ID }}
-        OCI_IMAGE_ID=${{ secrets.OCI_IMAGE_ID }}
-        OCI_SSH_PUBLIC_KEY=${{ secrets.OCI_SSH_PUBLIC_KEY }}
-        OCI_SHAPE=${{ secrets.OCI_SHAPE }}
-        OCI_OCPUS=${{ secrets.OCI_OCPUS }}
-        OCI_MEMORY_IN_GBS=${{ secrets.OCI_MEMORY_IN_GBS }}
-        OCI_AVAILABILITY_DOMAIN=${{ secrets.OCI_AVAILABILITY_DOMAIN }}
-        OCI_MAX_INSTANCES=${{ secrets.OCI_MAX_INSTANCES }}
-        EOF
 
     - name: Run script
       run: php index.php
