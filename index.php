@@ -17,12 +17,6 @@ $envFilename = empty($argv[1]) ? '.env' : $argv[1];
 $dotenv = Dotenv::createUnsafeImmutable(__DIR__, $envFilename);
 $dotenv->safeLoad();
 
-/*
- * No need to modify any value in this file anymore!
- * Copy .env.example to .env and adjust there instead.
- *
- * README.md now has all the information.
- */
 $config = new OciConfig(
     getenv('OCI_REGION'),
     getenv('OCI_USER_ID'),
@@ -80,29 +74,53 @@ if (!empty($config->availabilityDomains)) {
     $availabilityDomains = $api->getAvailabilityDomains($config);
 }
 
-// Process SSH key to ensure it's JSON-safe
+// Process SSH key
 $sshKeyRaw = getenv('OCI_SSH_PUBLIC_KEY');
-
-// Remove all whitespace (newlines, tabs, extra spaces)
 $sshKeyCleaned = preg_replace('/\s+/', ' ', trim($sshKeyRaw));
 
-// Use json_encode to properly escape the string, then extract the escaped value
-$jsonEncoded = json_encode(['key' => $sshKeyCleaned]);
-$jsonDecoded = json_decode($jsonEncoded, true);
-$sshKeySafe = $jsonDecoded['key'];
+// Test different escaping strategies
+echo "=== SSH KEY ANALYSIS ===\n";
+echo "Raw length: " . strlen($sshKeyRaw) . "\n";
+echo "Cleaned length: " . strlen($sshKeyCleaned) . "\n";
+echo "Backslashes in cleaned: " . substr_count($sshKeyCleaned, "\\") . "\n";
 
-// Verify it's the same (json_encode/decode should handle escaping properly)
-if ($sshKeySafe !== $sshKeyCleaned) {
-    echo "WARNING: SSH key was modified during JSON encoding\n";
-    echo "Original: " . substr($sshKeyCleaned, 0, 100) . "...\n";
-    echo "Safe: " . substr($sshKeySafe, 0, 100) . "...\n";
-}
+// Strategy 1: Double escape
+$strategy1 = str_replace(['\\', '"'], ['\\\\', '\\"'], $sshKeyCleaned);
+echo "\nStrategy 1 (double escape): " . substr_count($strategy1, "\\") . " backslashes\n";
+
+// Strategy 2: Remove backslashes entirely
+$strategy2 = str_replace('\\', '', $sshKeyCleaned);
+echo "Strategy 2 (remove backslashes): " . substr_count($strategy2, "\\") . " backslashes\n";
+
+// Strategy 3: Use json_encode then strip quotes
+$strategy3 = json_encode($sshKeyCleaned, JSON_UNESCAPED_SLASHES);
+$strategy3 = trim($strategy3, '"');
+echo "Strategy 3 (json_encode): " . substr_count($strategy3, "\\") . " backslashes\n";
+
+// Test JSON validity
+$testJson1 = '{"key":"' . $strategy1 . '"}';
+$testJson2 = '{"key":"' . $strategy2 . '"}';
+$testJson3 = '{"key":"' . $strategy3 . '"}';
+
+echo "\nJSON validity tests:\n";
+echo "Strategy 1: " . (json_decode($testJson1) !== null ? "VALID" : "INVALID") . "\n";
+echo "Strategy 2: " . (json_decode($testJson2) !== null ? "VALID" : "INVALID") . "\n";
+echo "Strategy 3: " . (json_decode($testJson3) !== null ? "VALID" : "INVALID") . "\n";
+
+// Show first 150 chars of each
+echo "\nFirst 150 chars:\n";
+echo "Strategy 1: " . substr($strategy1, 0, 150) . "\n";
+echo "Strategy 2: " . substr($strategy2, 0, 150) . "\n";
+echo "Strategy 3: " . substr($strategy3, 0, 150) . "\n";
+echo "========================\n\n";
+
+// Use the strategy that produces valid JSON
+$sshKeyToUse = $strategy2; // Try removing backslashes first
 
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
     try {
-        // Pass the cleaned key - OciApi will insert it into JSON string
-        $instanceDetails = $api->createInstance($config, $shape, $sshKeyCleaned, $availabilityDomain);
+        $instanceDetails = $api->createInstance($config, $shape, $sshKeyToUse, $availabilityDomain);
     } catch(ApiCallException $e) {
         $message = $e->getMessage();
         echo "$message\n";
@@ -116,11 +134,9 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
             continue;
         }
 
-        // current config is broken
         return;
     }
 
-    // success
     $message = json_encode($instanceDetails, JSON_PRETTY_PRINT);
     echo "$message\n";
     if ($notifier->isSupported()) {
