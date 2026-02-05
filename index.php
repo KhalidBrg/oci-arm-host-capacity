@@ -1,7 +1,6 @@
 <?php
 declare(strict_types=1);
 
-
 // useful when script is being executed by cron user
 $pathPrefix = ''; // e.g. /usr/share/nginx/oci-arm-host-capacity/
 
@@ -30,7 +29,7 @@ $config = new OciConfig(
     getenv('OCI_TENANCY_ID'),
     getenv('OCI_KEY_FINGERPRINT'),
     getenv('OCI_PRIVATE_KEY_FILENAME'),
-    getenv('OCI_AVAILABILITY_DOMAIN') ?: null, // null or '' or 'jYtI:PHX-AD-1' or ['jYtI:PHX-AD-1','jYtI:PHX-AD-2']
+    getenv('OCI_AVAILABILITY_DOMAIN') ?: null,
     getenv('OCI_SUBNET_ID'),
     getenv('OCI_IMAGE_ID'),
     (int) getenv('OCI_OCPUS'),
@@ -53,14 +52,6 @@ if (getenv('TOO_MANY_REQUESTS_TIME_WAIT')) {
     $api->setWaiter(new TooManyRequestsWaiter((int) getenv('TOO_MANY_REQUESTS_TIME_WAIT')));
 }
 $notifier = (function (): \Hitrov\Interfaces\NotifierInterface {
-    /*
-     * if you have own https://core.telegram.org/bots
-     * and set TELEGRAM_BOT_API_KEY and your TELEGRAM_USER_ID in .env
-     *
-     * then you can get notified when script will succeed.
-     * otherwise - don't mind OR develop you own NotifierInterface
-     * to e.g. send SMS or email.
-     */
     return new \Hitrov\Notification\Telegram();
 })();
 
@@ -89,30 +80,38 @@ if (!empty($config->availabilityDomains)) {
     $availabilityDomains = $api->getAvailabilityDomains($config);
 }
 
-// Clean and escape SSH key for JSON
+// Process SSH key to ensure it's JSON-safe
 $sshKeyRaw = getenv('OCI_SSH_PUBLIC_KEY');
-// Remove extra whitespace (newlines, multiple spaces)
+
+// Remove all whitespace (newlines, tabs, extra spaces)
 $sshKeyCleaned = preg_replace('/\s+/', ' ', trim($sshKeyRaw));
-// Escape backslashes and double quotes for JSON string
-$sshKeyEscaped = addcslashes($sshKeyCleaned, '\\"');
+
+// Use json_encode to properly escape the string, then extract the escaped value
+$jsonEncoded = json_encode(['key' => $sshKeyCleaned]);
+$jsonDecoded = json_decode($jsonEncoded, true);
+$sshKeySafe = $jsonDecoded['key'];
+
+// Verify it's the same (json_encode/decode should handle escaping properly)
+if ($sshKeySafe !== $sshKeyCleaned) {
+    echo "WARNING: SSH key was modified during JSON encoding\n";
+    echo "Original: " . substr($sshKeyCleaned, 0, 100) . "...\n";
+    echo "Safe: " . substr($sshKeySafe, 0, 100) . "...\n";
+}
 
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
     try {
-        $instanceDetails = $api->createInstance($config, $shape, $sshKeyEscaped, $availabilityDomain);
+        // Pass the cleaned key - OciApi will insert it into JSON string
+        $instanceDetails = $api->createInstance($config, $shape, $sshKeyCleaned, $availabilityDomain);
     } catch(ApiCallException $e) {
         $message = $e->getMessage();
         echo "$message\n";
-//            if ($notifier->isSupported()) {
-//                $notifier->notify($message);
-//            }
 
         if (
             $e->getCode() === 500 &&
             strpos($message, 'InternalError') !== false &&
             strpos($message, 'Out of host capacity') !== false
         ) {
-            // trying next availability domain
             sleep(16);
             continue;
         }
