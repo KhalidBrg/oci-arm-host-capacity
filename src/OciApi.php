@@ -36,84 +36,101 @@ class OciApi
      * @throws OCI\Exception\SigningValidationFailedException
      * @throws CurlException
      */
-    public function createInstance(
-        OciConfig $config,
-        string $shape,
-        string $sshKey,
-        string $availabilityDomain
-    ): array
-    {
-        if (isset($this->waiter) && $this->waiter->isConfigured()) {
-            if ($this->waiter->isTooEarly()) {
-                throw new TooManyRequestsWaiterException(
-                    "Will retry after {$this->waiter->secondsRemaining()} seconds",
-                );
-            }
-
-            $this->waiter->remove();
+   public function createInstance(
+    OciConfig $config,
+    string $shape,
+    string $sshKey,
+    string $availabilityDomain
+): array
+{
+    if (isset($this->waiter) && $this->waiter->isConfigured()) {
+        if ($this->waiter->isTooEarly()) {
+            throw new TooManyRequestsWaiterException(
+                "Will retry after {$this->waiter->secondsRemaining()} seconds",
+            );
         }
 
-        $displayName = 'instance-' . date('Ymd-Hi');
+        $this->waiter->remove();
+    }
 
-        $body = <<<EOD
-{
-    "metadata": {
-        "ssh_authorized_keys": "$sshKey"
-    },
-    "shape": "$shape",
-    "compartmentId": "{$config->tenancyId}",
-    "displayName": "$displayName",
-    "availabilityDomain": "$availabilityDomain",
-    "sourceDetails": {$config->getSourceDetails()},
-    "createVnicDetails": {
-        "assignPublicIp": false,
-        "subnetId": "{$config->subnetId}",
-        "assignPrivateDnsRecord": true
-    },
-    "agentConfig": {
-        "pluginsConfig": [
-            {
-                "name": "Compute Instance Monitoring",
-                "desiredState": "ENABLED"
-            }
+    $displayName = 'instance-' . date('Ymd-Hi');
+
+    // Construire le corps comme un tableau PHP
+    $bodyArray = [
+        'metadata' => [
+            'ssh_authorized_keys' => $sshKey,
         ],
-        "isMonitoringDisabled": false,
-        "isManagementDisabled": false
-    },
-    "definedTags": {},
-    "freeformTags": {},
-    "instanceOptions": {
-        "areLegacyImdsEndpointsDisabled": false
-    },
-    "availabilityConfig": {
-        "recoveryAction": "RESTORE_INSTANCE"
-    },
-    "shapeConfig": {
-        "ocpus": {$config->ocpus},
-        "memoryInGBs": {$config->memoryInGBs}
+        'shape' => $shape,
+        'compartmentId' => $config->tenancyId,
+        'displayName' => $displayName,
+        'availabilityDomain' => $availabilityDomain,
+        'sourceDetails' => json_decode($config->getSourceDetails(), true),
+        'createVnicDetails' => [
+            'assignPublicIp' => false,
+            'subnetId' => $config->subnetId,
+            'assignPrivateDnsRecord' => true,
+        ],
+        'agentConfig' => [
+            'pluginsConfig' => [
+                [
+                    'name' => 'Compute Instance Monitoring',
+                    'desiredState' => 'ENABLED',
+                ],
+            ],
+            'isMonitoringDisabled' => false,
+            'isManagementDisabled' => false,
+        ],
+        'definedTags' => new \stdClass(),
+        'freeformTags' => new \stdClass(),
+        'instanceOptions' => [
+            'areLegacyImdsEndpointsDisabled' => false,
+        ],
+        'availabilityConfig' => [
+            'recoveryAction' => 'RESTORE_INSTANCE',
+        ],
+        'shapeConfig' => [
+            'ocpus' => (float) $config->ocpus,
+            'memoryInGBs' => (float) $config->memoryInGBs,
+        ],
+    ];
+
+    // Convertir en JSON
+    $body = json_encode($bodyArray, JSON_UNESCAPED_SLASHES);
+
+    // === DEBUG ===
+    echo "\n=== Request Body (Pretty Print) ===\n";
+    echo json_encode($bodyArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    echo "====================================\n\n";
+    
+    echo "=== Request Body (Raw JSON) ===\n";
+    echo $body . "\n";
+    echo "================================\n\n";
+
+    // Vérifier que le JSON est valide
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        echo "❌ JSON Encoding Error: " . json_last_error_msg() . "\n";
+        throw new \Exception("Failed to encode JSON: " . json_last_error_msg());
+    }
+    echo "✅ JSON is valid\n\n";
+
+    $baseUrl = "{$this->getBaseApiUrl($config)}/instances/";
+
+    try {
+        return $this->call($config, $baseUrl, 'POST', $body);
+    } catch(ApiCallException $e) {
+        $message = $e->getMessage();
+        if ($e->getCode() != 429 && strpos($message, 'TooManyRequests') === false) {
+            throw $e;
+        }
+
+        if (!isset($this->waiter) || !$this->waiter->isConfigured()) {
+            throw $e;
+        }
+
+        $this->waiter->enable();
+        throw new TooManyRequestsWaiterException($message);
     }
 }
-EOD;
-
-        $baseUrl = "{$this->getBaseApiUrl($config)}/instances/";
-
-        try {
-            return $this->call($config, $baseUrl, 'POST', $body);
-        } catch(ApiCallException $e) {
-            $message = $e->getMessage();
-            if ($e->getCode() != 429 && strpos($message, 'TooManyRequests') === false) {
-                throw $e;
-            }
-
-            if (!isset($this->waiter) || !$this->waiter->isConfigured()) {
-                throw $e;
-            }
-
-            $this->waiter->enable();
-            throw new TooManyRequestsWaiterException($message);
-        }
-    }
-
     /**
      * @param OciConfig $config
      * @return array
