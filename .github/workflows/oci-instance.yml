@@ -1,4 +1,3 @@
-Like this:
 name: OCI Create Instance
 
 on:
@@ -23,13 +22,18 @@ jobs:
     - name: Install dependencies
       run: composer install --no-dev --no-interaction --prefer-dist
 
+    - name: Create private key file
+      run: |
+        echo "${{ secrets.OCI_PRIVATE_KEY_FILENAME }}" > private_key.pem
+        chmod 600 private_key.pem
+
     - name: Run instance creation script
       env:
         OCI_REGION: ${{ secrets.OCI_REGION }}
         OCI_USER_ID: ${{ secrets.OCI_USER_ID }}
         OCI_TENANCY_ID: ${{ secrets.OCI_TENANCY_ID }}
         OCI_KEY_FINGERPRINT: ${{ secrets.OCI_KEY_FINGERPRINT }}
-        OCI_PRIVATE_KEY_FILENAME: ${{ secrets.OCI_PRIVATE_KEY_FILENAME }}
+        OCI_PRIVATE_KEY_FILENAME: private_key.pem
         OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
         OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
         OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
@@ -38,5 +42,4 @@ jobs:
         OCI_MEMORY_IN_GBS: ${{ secrets.OCI_MEMORY_IN_GBS }}
         OCI_AVAILABILITY_DOMAIN: ${{ secrets.OCI_AVAILABILITY_DOMAIN }}
         OCI_MAX_INSTANCES: ${{ secrets.OCI_MAX_INSTANCES }}
-
       run: php index.php
