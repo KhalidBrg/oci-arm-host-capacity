@@ -39,6 +39,24 @@ if ($bootVolumeSizeInGBs) {
 }
 
 $api = new OciApi();
+
+// === ADD GUZZLE LOGGING MIDDLEWARE ===
+$reflectionClass = new ReflectionClass($api);
+$reflectionProperty = $reflectionClass->getProperty('client');
+$reflectionProperty->setAccessible(true);
+
+$container = [];
+$history = \GuzzleHttp\Middleware::history($container);
+$handlerStack = \GuzzleHttp\HandlerStack::create();
+$handlerStack->push($history);
+
+$newClient = new \GuzzleHttp\Client([
+    'handler' => $handlerStack,
+    'http_errors' => false
+]);
+$reflectionProperty->setValue($api, $newClient);
+// === END LOGGING SETUP ===
+
 if (getenv('CACHE_AVAILABILITY_DOMAINS')) {
     $api->setCache(new FileCache($config));
 }
@@ -77,45 +95,12 @@ if (!empty($config->availabilityDomains)) {
 // Process SSH key
 $sshKeyRaw = getenv('OCI_SSH_PUBLIC_KEY');
 $sshKeyCleaned = preg_replace('/\s+/', ' ', trim($sshKeyRaw));
+$sshKeyToUse = str_replace('\\', '', $sshKeyCleaned);
 
-// Test different escaping strategies
-echo "=== SSH KEY ANALYSIS ===\n";
-echo "Raw length: " . strlen($sshKeyRaw) . "\n";
-echo "Cleaned length: " . strlen($sshKeyCleaned) . "\n";
-echo "Backslashes in cleaned: " . substr_count($sshKeyCleaned, "\\") . "\n";
-
-// Strategy 1: Double escape
-$strategy1 = str_replace(['\\', '"'], ['\\\\', '\\"'], $sshKeyCleaned);
-echo "\nStrategy 1 (double escape): " . substr_count($strategy1, "\\") . " backslashes\n";
-
-// Strategy 2: Remove backslashes entirely
-$strategy2 = str_replace('\\', '', $sshKeyCleaned);
-echo "Strategy 2 (remove backslashes): " . substr_count($strategy2, "\\") . " backslashes\n";
-
-// Strategy 3: Use json_encode then strip quotes
-$strategy3 = json_encode($sshKeyCleaned, JSON_UNESCAPED_SLASHES);
-$strategy3 = trim($strategy3, '"');
-echo "Strategy 3 (json_encode): " . substr_count($strategy3, "\\") . " backslashes\n";
-
-// Test JSON validity
-$testJson1 = '{"key":"' . $strategy1 . '"}';
-$testJson2 = '{"key":"' . $strategy2 . '"}';
-$testJson3 = '{"key":"' . $strategy3 . '"}';
-
-echo "\nJSON validity tests:\n";
-echo "Strategy 1: " . (json_decode($testJson1) !== null ? "VALID" : "INVALID") . "\n";
-echo "Strategy 2: " . (json_decode($testJson2) !== null ? "VALID" : "INVALID") . "\n";
-echo "Strategy 3: " . (json_decode($testJson3) !== null ? "VALID" : "INVALID") . "\n";
-
-// Show first 150 chars of each
-echo "\nFirst 150 chars:\n";
-echo "Strategy 1: " . substr($strategy1, 0, 150) . "\n";
-echo "Strategy 2: " . substr($strategy2, 0, 150) . "\n";
-echo "Strategy 3: " . substr($strategy3, 0, 150) . "\n";
-echo "========================\n\n";
-
-// Use the strategy that produces valid JSON
-$sshKeyToUse = $strategy2; // Try removing backslashes first
+echo "=== SSH KEY INFO ===\n";
+echo "Length: " . strlen($sshKeyToUse) . "\n";
+echo "First 80 chars: " . substr($sshKeyToUse, 0, 80) . "\n";
+echo "====================\n\n";
 
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
@@ -124,6 +109,44 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
     } catch(ApiCallException $e) {
         $message = $e->getMessage();
         echo "$message\n";
+
+        // === DETAILED ERROR LOGGING ===
+        echo "\n=== DETAILED ERROR DEBUG ===\n";
+        echo "Exception Code: " . $e->getCode() . "\n";
+        echo "Exception Message: " . $message . "\n";
+        
+        if (!empty($container)) {
+            foreach ($container as $transaction) {
+                echo "\n--- HTTP REQUEST ---\n";
+                echo $transaction['request']->getMethod() . ' ' . $transaction['request']->getUri() . "\n";
+                echo "Headers:\n";
+                foreach ($transaction['request']->getHeaders() as $name => $values) {
+                    if ($name !== 'authorization') { // Don't log auth header
+                        echo "  $name: " . implode(', ', $values) . "\n";
+                    }
+                }
+                echo "\nRequest Body:\n";
+                $requestBody = (string) $transaction['request']->getBody();
+                echo $requestBody . "\n";
+                
+                // Validate JSON
+                $decoded = json_decode($requestBody);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    echo "\n!!! JSON DECODE ERROR: " . json_last_error_msg() . " !!!\n";
+                } else {
+                    echo "\nJSON is valid\n";
+                }
+                
+                if (isset($transaction['response'])) {
+                    echo "\n--- HTTP RESPONSE ---\n";
+                    echo "Status: " . $transaction['response']->getStatusCode() . "\n";
+                    echo "Response Body:\n";
+                    echo $transaction['response']->getBody() . "\n";
+                }
+            }
+        }
+        echo "===========================\n\n";
+        // === END DETAILED ERROR LOGGING ===
 
         if (
             $e->getCode() === 500 &&
