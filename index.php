@@ -111,9 +111,9 @@ $config = new OciConfig(
 
 echo "=== Configuration Debug ===\n";
 echo "Region: " . $config->region . "\n";
-echo "User ID: " . substr($config->userId, 0, 20) . "...\n";
+echo "User ID: " . substr($config->ociUserId, 0, 20) . "...\n";  // ✅ CORRIGÉ
 echo "Tenancy ID: " . substr($config->tenancyId, 0, 20) . "...\n";
-echo "Key Fingerprint: " . $config->keyFingerprint . "\n";
+echo "Key Fingerprint: " . $config->keyFingerPrint . "\n";  // ✅ CORRIGÉ (keyFingerPrint pas keyFingerprint)
 echo "Subnet ID: " . substr($config->subnetId, 0, 20) . "...\n";
 echo "Image ID: " . substr($config->imageId, 0, 20) . "...\n";
 echo "OCPUs: " . $config->ocpus . " (type: " . gettype($config->ocpus) . ")\n";
@@ -167,7 +167,7 @@ if ($existingInstances) {
         unlink($tempKeyFile);
     }
     
-    return;
+    exit(0);
 }
 
 echo "No existing instances found. Attempting to create new instance...\n\n";
@@ -187,13 +187,6 @@ if (!empty($config->availabilityDomains)) {
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
     echo "=== Trying availability domain: $availabilityDomain ===\n";
-    
-    // Debug de la requête qui va être envoyée
-    echo "\n--- Request Details ---\n";
-    echo "Shape: $shape\n";
-    echo "SSH Key length: " . strlen($sshKey) . "\n";
-    echo "Availability Domain: $availabilityDomain\n";
-    echo "-----------------------\n\n";
     
     try {
         $instanceDetails = $api->createInstance($config, $shape, $sshKey, $availabilityDomain);
