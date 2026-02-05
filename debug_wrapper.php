@@ -1,0 +1,110 @@
+<?php
+declare(strict_types=1);
+
+$pathPrefix = '';
+require "{$pathPrefix}vendor/autoload.php";
+
+use Dotenv\Dotenv;
+use Hitrov\OciApi;
+use Hitrov\OciConfig;
+
+$envFilename = empty($argv[1]) ? '.env' : $argv[1];
+$dotenv = Dotenv::createUnsafeImmutable(__DIR__, $envFilename);
+$dotenv->safeLoad();
+
+$config = new OciConfig(
+    getenv('OCI_REGION'),
+    getenv('OCI_USER_ID'),
+    getenv('OCI_TENANCY_ID'),
+    getenv('OCI_KEY_FINGERPRINT'),
+    getenv('OCI_PRIVATE_KEY_FILENAME'),
+    getenv('OCI_AVAILABILITY_DOMAIN') ?: null,
+    getenv('OCI_SUBNET_ID'),
+    getenv('OCI_IMAGE_ID'),
+    (int) getenv('OCI_OCPUS'),
+    (int) getenv('OCI_MEMORY_IN_GBS')
+);
+
+$api = new OciApi();
+$availabilityDomains = $api->getAvailabilityDomains($config);
+$shape = getenv('OCI_SHAPE');
+
+// Clean SSH key
+$sshKeyRaw = getenv('OCI_SSH_PUBLIC_KEY');
+$sshKeyCleaned = preg_replace('/\s+/', ' ', trim($sshKeyRaw));
+$sshKeyNoBackslash = str_replace('\\', '', $sshKeyCleaned);
+
+// Use reflection to access createInstance and capture the body
+$reflection = new ReflectionClass($api);
+$method = $reflection->getMethod('createInstance');
+
+// Manually build what createInstance would build
+$displayName = 'instance-' . date('Ymd-Hi');
+$availabilityDomain = is_array($availabilityDomains[0]) ? $availabilityDomains[0]['name'] : $availabilityDomains[0];
+
+// Reconstruct the body as OciApi does it
+$sourceDetails = $config->getSourceDetails();
+
+$body = <<<JSON
+{
+    "metadata": {
+        "ssh_authorized_keys": "$sshKeyNoBackslash"
+    },
+    "shape": "$shape",
+    "compartmentId": "{$config->tenancyId}",
+    "displayName": "$displayName",
+    "availabilityDomain": "$availabilityDomain",
+    "sourceDetails": $sourceDetails,
+    "createVnicDetails": {
+        "assignPublicIp": false,
+        "subnetId": "{$config->subnetId}",
+        "assignPrivateDnsRecord": true
+    },
+    "agentConfig": {
+        "pluginsConfig": [
+            {
+                "name": "Compute Instance Monitoring",
+                "desiredState": "ENABLED"
+            }
+        ],
+        "isMonitoringDisabled": false,
+        "isManagementDisabled": false
+    },
+    "definedTags": {},
+    "freeformTags": {},
+    "instanceOptions": {
+        "areLegacyImdsEndpointsDisabled": false
+    },
+    "availabilityConfig": {
+        "recoveryAction": "RESTORE_INSTANCE"
+    },
+    "shapeConfig": {
+        "ocpus": {$config->ocpus},
+        "memoryInGBs": {$config->memoryInGBs}
+    }
+}
+JSON;
+
+echo "=== RECONSTRUCTED REQUEST BODY ===\n";
+echo $body;
+echo "\n=================================\n\n";
+
+// Validate JSON
+$decoded = json_decode($body);
+if (json_last_error() !== JSON_ERROR_NONE) {
+    echo "JSON ERROR: " . json_last_error_msg() . "\n";
+    echo "Error at position: " . json_last_error() . "\n";
+    
+    // Find the problematic part
+    $lines = explode("\n", $body);
+    foreach ($lines as $i => $line) {
+        $test = json_decode('{' . $line . '}');
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            echo "Problem at line " . ($i + 1) . ": $line\n";
+        }
+    }
+} else {
+    echo "JSON is VALID!\n";
+    echo "Pretty printed:\n";
+    echo json_encode($decoded, JSON_PRETTY_PRINT);
+}
