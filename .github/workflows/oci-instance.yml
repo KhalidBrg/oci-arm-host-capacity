@@ -1,0 +1,54 @@
+name: OCI ARM Instance Creation
+
+on:
+  schedule:
+    # Runs every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  create-instance:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: mbstring, curl, openssl
+        coverage: none
+
+    - name: Install Composer dependencies
+      run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+    - name: Create .env file from secrets
+      run: |
+        cat > .env << EOF
+        OCI_REGION=${{ secrets.OCI_REGION }}
+        OCI_USER_ID=${{ secrets.OCI_USER_ID }}
+        OCI_TENANCY_ID=${{ secrets.OCI_TENANCY_ID }}
+        OCI_KEY_FINGERPRINT=${{ secrets.OCI_KEY_FINGERPRINT }}
+        OCI_PRIVATE_KEY_FILENAME=${{ secrets.OCI_PRIVATE_KEY_FILENAME }}
+        OCI_SUBNET_ID=${{ secrets.OCI_SUBNET_ID }}
+        OCI_IMAGE_ID=${{ secrets.OCI_IMAGE_ID }}
+        OCI_SSH_PUBLIC_KEY=${{ secrets.OCI_SSH_PUBLIC_KEY }}
+        OCI_SHAPE=${{ secrets.OCI_SHAPE }}
+        OCI_OCPUS=${{ secrets.OCI_OCPUS }}
+        OCI_MEMORY_IN_GBS=${{ secrets.OCI_MEMORY_IN_GBS }}
+        OCI_AVAILABILITY_DOMAIN=${{ secrets.OCI_AVAILABILITY_DOMAIN }}
+        OCI_MAX_INSTANCES=${{ secrets.OCI_MAX_INSTANCES }}
+        EOF
+
+    - name: Run OCI instance creation script
+      run: php index.php
+
+    - name: Upload logs (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: oci-logs
+        path: oci.log
+        retention-days: 7
