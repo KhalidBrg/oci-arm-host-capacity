@@ -84,13 +84,24 @@ if (file_exists($privateKeyInput)) {
 
 echo "\n";
 
+// === NETTOYER LA CLÉ SSH ===
+$sshKeyRaw = env('OCI_SSH_PUBLIC_KEY');
+$sshKey = trim(str_replace(["\r", "\n"], '', $sshKeyRaw));
+
+echo "=== SSH Key Debug ===\n";
+echo "Raw SSH Key length: " . strlen($sshKeyRaw) . "\n";
+echo "Cleaned SSH Key length: " . strlen($sshKey) . "\n";
+echo "SSH Key starts with: " . substr($sshKey, 0, 30) . "...\n";
+echo "SSH Key ends with: ..." . substr($sshKey, -30) . "\n";
+echo "=====================\n\n";
+
 // === CONFIGURATION OCI ===
 $config = new OciConfig(
     env('OCI_REGION'),
     env('OCI_USER_ID'),
     env('OCI_TENANCY_ID'),
     env('OCI_KEY_FINGERPRINT'),
-    $privateKeyPath,  // Utiliser le chemin du fichier (existant ou temporaire)
+    $privateKeyPath,
     env('OCI_AVAILABILITY_DOMAIN') ?: null,
     env('OCI_SUBNET_ID'),
     env('OCI_IMAGE_ID'),
@@ -98,12 +109,26 @@ $config = new OciConfig(
     (int) env('OCI_MEMORY_IN_GBS')
 );
 
+echo "=== Configuration Debug ===\n";
+echo "Region: " . $config->region . "\n";
+echo "User ID: " . substr($config->userId, 0, 20) . "...\n";
+echo "Tenancy ID: " . substr($config->tenancyId, 0, 20) . "...\n";
+echo "Key Fingerprint: " . $config->keyFingerprint . "\n";
+echo "Subnet ID: " . substr($config->subnetId, 0, 20) . "...\n";
+echo "Image ID: " . substr($config->imageId, 0, 20) . "...\n";
+echo "OCPUs: " . $config->ocpus . " (type: " . gettype($config->ocpus) . ")\n";
+echo "Memory: " . $config->memoryInGBs . " GB (type: " . gettype($config->memoryInGBs) . ")\n";
+echo "Availability Domain: " . ($config->availabilityDomains ?: 'null') . "\n";
+echo "===========================\n\n";
+
 $bootVolumeSizeInGBs = (string) env('OCI_BOOT_VOLUME_SIZE_IN_GBS');
 $bootVolumeId = (string) env('OCI_BOOT_VOLUME_ID');
 if ($bootVolumeSizeInGBs) {
     $config->setBootVolumeSizeInGBs($bootVolumeSizeInGBs);
+    echo "Boot Volume Size: $bootVolumeSizeInGBs GB\n";
 } elseif ($bootVolumeId) {
     $config->setBootVolumeId($bootVolumeId);
+    echo "Boot Volume ID: " . substr($bootVolumeId, 0, 20) . "...\n";
 }
 
 $api = new OciApi();
@@ -119,7 +144,7 @@ $notifier = new \Hitrov\Notification\Telegram();
 $shape = env('OCI_SHAPE');
 $maxRunningInstancesOfThatShape = (int) env('OCI_MAX_INSTANCES', 1);
 
-echo "Fetching existing instances...\n";
+echo "\nFetching existing instances...\n";
 $instances = $api->getInstances($config);
 echo "Total instances found: " . count($instances) . "\n";
 
@@ -154,18 +179,28 @@ if (!empty($config->availabilityDomains)) {
         $availabilityDomains = [ $config->availabilityDomains ];
     }
 } else {
+    echo "Fetching availability domains...\n";
     $availabilityDomains = $api->getAvailabilityDomains($config);
+    echo "Available domains: " . count($availabilityDomains) . "\n\n";
 }
 
 foreach ($availabilityDomains as $availabilityDomainEntity) {
     $availabilityDomain = is_array($availabilityDomainEntity) ? $availabilityDomainEntity['name'] : $availabilityDomainEntity;
-    echo "Trying availability domain: $availabilityDomain\n";
+    echo "=== Trying availability domain: $availabilityDomain ===\n";
+    
+    // Debug de la requête qui va être envoyée
+    echo "\n--- Request Details ---\n";
+    echo "Shape: $shape\n";
+    echo "SSH Key length: " . strlen($sshKey) . "\n";
+    echo "Availability Domain: $availabilityDomain\n";
+    echo "-----------------------\n\n";
     
     try {
-        $instanceDetails = $api->createInstance($config, $shape, env('OCI_SSH_PUBLIC_KEY'), $availabilityDomain);
+        $instanceDetails = $api->createInstance($config, $shape, $sshKey, $availabilityDomain);
     } catch(ApiCallException $e) {
         $message = $e->getMessage();
-        echo "Error: $message\n";
+        echo "❌ Error: $message\n";
+        echo "Error Code: " . $e->getCode() . "\n\n";
 
         if (
             $e->getCode() === 500 &&
@@ -184,7 +219,7 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
             unlink($tempKeyFile);
         }
         
-        return;
+        exit(1);
     }
 
     // Success
@@ -200,7 +235,7 @@ foreach ($availabilityDomains as $availabilityDomainEntity) {
         unlink($tempKeyFile);
     }
 
-    return;
+    exit(0);
 }
 
 echo "❌ Failed to create instance in all availability domains.\n";
@@ -209,3 +244,5 @@ echo "❌ Failed to create instance in all availability domains.\n";
 if ($tempKeyFile && file_exists($tempKeyFile)) {
     unlink($tempKeyFile);
 }
+
+exit(1);
